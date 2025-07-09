@@ -55,8 +55,8 @@ class TaskmasterAction {
   }
 
   private async findPRDFiles(): Promise<string[]> {
-    const { glob } = await import('glob');
-    return await glob(this.inputs.prdPathGlob);
+    const glob = require('glob');
+    return await glob.glob(this.inputs.prdPathGlob);
   }
 
   private async generateTaskGraph(prdFiles: string[]): Promise<any> {
