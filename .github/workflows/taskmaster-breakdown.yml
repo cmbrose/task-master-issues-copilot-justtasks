@@ -1,0 +1,126 @@
+name: Taskmaster Breakdown Command
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  breakdown:
+    runs-on: ubuntu-latest
+    if: contains(github.event.comment.body, '/breakdown')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+
+      - name: Build TypeScript
+        run: |
+          npm run build
+
+      - name: Parse breakdown command
+        id: parse-command
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          echo "Parsing breakdown command from comment..."
+          echo "Comment body: $COMMENT_BODY"
+          
+          # Extract depth parameter (default: 2)
+          DEPTH=$(echo "$COMMENT_BODY" | grep -oP '(?<=--depth\s)\d+' || echo "2")
+          echo "depth=$DEPTH" >> $GITHUB_OUTPUT
+          
+          # Extract threshold parameter (default: 10)
+          THRESHOLD=$(echo "$COMMENT_BODY" | grep -oP '(?<=--threshold\s)\d+' || echo "10")
+          echo "threshold=$THRESHOLD" >> $GITHUB_OUTPUT
+          
+          # Set breakdown-max-depth limit (default: 2)
+          MAX_DEPTH=2
+          if [ "$DEPTH" -gt "$MAX_DEPTH" ]; then
+            echo "Warning: Requested depth $DEPTH exceeds maximum allowed depth $MAX_DEPTH"
+            DEPTH=$MAX_DEPTH
+          fi
+          echo "final_depth=$DEPTH" >> $GITHUB_OUTPUT
+          
+          echo "Parsed parameters - Depth: $DEPTH, Threshold: $THRESHOLD"
+
+      - name: Add reaction to indicate processing
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes'
+            });
+
+      - name: Execute breakdown command
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO: ${{ github.event.repository.name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          DEPTH: ${{ steps.parse-command.outputs.final_depth }}
+          THRESHOLD: ${{ steps.parse-command.outputs.threshold }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+        run: |
+          echo "Executing breakdown command..."
+          echo "Issue: #$ISSUE_NUMBER"
+          echo "Depth: $DEPTH"
+          echo "Threshold: $THRESHOLD"
+          echo "Commenter: $COMMENTER"
+          
+          # Run the breakdown command handler
+          node src/breakdown-command.js
+
+      - name: Add success reaction
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: '+1'
+            });
+
+      - name: Add failure reaction
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: '-1'
+            });
+
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## Breakdown Command Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Issue**: #${{ github.event.issue.number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Command**: /breakdown" >> $GITHUB_STEP_SUMMARY
+          echo "- **Depth**: ${{ steps.parse-command.outputs.final_depth }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Threshold**: ${{ steps.parse-command.outputs.threshold }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commenter**: ${{ github.event.comment.user.login }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
