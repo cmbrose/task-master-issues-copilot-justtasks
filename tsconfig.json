@@ -8,7 +8,7 @@
         "forceConsistentCasingInFileNames": true,
         "strict": true,
         "skipLibCheck": true,
-        "types": ["node"]
+        "types": ["node", "jest"]
     },
     "include": [
         "src/**/*",
@@ -16,7 +16,6 @@
     ],
     "exclude": [
         "node_modules",
-        "**/*.d.ts",
-        "**/*.test.ts"
+        "**/*.d.ts"
     ]
 }
