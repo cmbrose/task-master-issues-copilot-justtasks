@@ -15,6 +15,7 @@ import * as path from 'path';
 import * as dotenv from 'dotenv';
 
 import { components } from "@octokit/openapi-types";
+import { IssueHierarchyManager, IssueMetadata } from './src/issue-hierarchy';
 
 // Types for Node.js globals (process, etc.)
 // If you see type errors, run: npm install --save-dev @types/node
@@ -31,6 +32,7 @@ if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
 }
 
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
+const hierarchyManager = new IssueHierarchyManager(octokit, GITHUB_OWNER!, GITHUB_REPO!);
 
 const TASKS_PATH = path.join('.taskmaster', 'tasks', 'tasks.json');
 const COMPLEXITY_PATH  = path.join('.taskmaster', 'reports', 'task-complexity-report.json');
@@ -74,9 +76,22 @@ try {
   complexityMap = {};
 }
 
-// Helper to create issue body
+// Helper to create issue body with YAML front-matter
 function buildIssueBody(task: Task): string {
-  let body = '';
+  // Create metadata for YAML front-matter
+  const metadata: IssueMetadata = {
+    id: task.id,
+    title: task.title,
+    dependencies: task.dependencies,
+    priority: task.priority,
+    status: task.status,
+    complexity: task.id in complexityMap ? complexityMap[task.id] : undefined
+  };
+
+  // Generate YAML front-matter
+  const yamlFrontMatter = hierarchyManager.generateYAMLFrontMatter(metadata);
+  
+  let body = yamlFrontMatter;
 
   if ('details' in task && task.details) {
     body += `## Details\n${task.details}\n\n`;
@@ -154,12 +169,32 @@ async function createOrGetIssue(task: Task): Promise<Issue> {
     };
   }
 
+  // Determine initial labels
+  const labels = ['taskmaster'];
+  
+  // Add priority label if available
+  if (task.priority) {
+    labels.push(`priority:${task.priority}`);
+  }
+  
+  // Add complexity label if available
+  if (task.id in complexityMap && complexityMap[task.id]) {
+    const complexity = complexityMap[task.id];
+    if (complexity >= 7) {
+      labels.push('complexity:high');
+    } else if (complexity >= 4) {
+      labels.push('complexity:medium');
+    } else {
+      labels.push('complexity:low');
+    }
+  }
+
   const res = await octokit.issues.create({
     owner: GITHUB_OWNER!,
     repo: GITHUB_REPO!,
     title: task.title,
     body,
-    labels: ['taskmaster'],
+    labels,
   });
 
   allIssuesCache.push(res.data);
@@ -214,8 +249,7 @@ async function main() {
     idToIssue[`${task.id}`] = issue;
   }
 
-  // Update issues with dependency links
-  // For parent tasks
+  // Update issues with dependency links and manage blocked status
   for (const task of tasks) {
     const issue = idToIssue[`${task.id}`];
 
@@ -234,10 +268,46 @@ async function main() {
       });
       console.log(`Updated issue #${issue.number} with dependencies/required-bys.`);
     }
+
+    // Update blocked status based on dependencies
+    await hierarchyManager.updateBlockedStatus(issue.number);
   }
 
-  console.log('All issues created and linked.');
+  // Create parent-child relationships using Sub-issues API
+  for (const task of tasks) {
+    const issue = idToIssue[`${task.id}`];
+    
+    // Create sub-issue relationships for subtasks
+    if (task.subtasks?.length) {
+      for (const subtask of task.subtasks) {
+        const subtaskIssue = idToIssue[`${subtask.id}`];
+        if (subtaskIssue) {
+          await hierarchyManager.createSubIssue(issue.number, subtaskIssue.number);
+        }
+      }
+    }
+  }
+
+  console.log('All issues created, linked, and hierarchy established.');
 }
+
+// Helper function to handle issue closure and dependency resolution
+// This would typically be called by a GitHub webhook when an issue is closed
+async function handleIssueClosure(closedIssueNumber: number): Promise<void> {
+  console.log(`Handling closure of issue #${closedIssueNumber}`);
+  
+  try {
+    // Resolve dependencies for all issues that depend on this closed issue
+    await hierarchyManager.resolveDependencies(closedIssueNumber);
+    
+    console.log(`Dependency resolution completed for issue #${closedIssueNumber}`);
+  } catch (error) {
+    console.error(`Error handling closure of issue #${closedIssueNumber}:`, error);
+  }
+}
+
+// Export the new function for use in webhooks or other integrations
+export { handleIssueClosure };
 
 main().catch(e => {
   console.error(e);
