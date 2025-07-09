@@ -14,6 +14,8 @@ This GitHub Action automatically generates GitHub Issues from PRD (Product Requi
 - 🗂️ Configurable retention policies for artifact cleanup
 - 📝 Structured logging for all artifact operations
 - ⚙️ Configurable complexity thresholds and depth limits
+- 🔍 **Dry-run mode** with preview comments for pull requests
+- 📝 **Pull request integration** with automatic task previews
 
 ## Usage
 
@@ -78,8 +80,12 @@ jobs:
 | `prd-path-glob` | Glob pattern for PRD files to process | No | `docs/**.prd.md` |
 | `breakdown-max-depth` | Maximum depth for task breakdown | No | `2` |
 | `taskmaster-args` | Additional arguments to pass to Taskmaster CLI | No | `''` |
+<<<<<<< HEAD
 | `replay-artifact-id` | ID of artifact to replay (for recovery workflows) | No | `''` |
 | `cleanup-artifacts` | Whether to cleanup expired artifacts | No | `false` |
+=======
+| `dry-run` | Enable dry-run mode (preview only, no issues created) | No | `false` |
+>>>>>>> origin/main
 
 ## Outputs
 
@@ -94,8 +100,9 @@ This action requires the following permissions:
 
 ```yaml
 permissions:
-  issues: write    # Required to create and manage GitHub Issues
-  contents: read   # Required to read PRD files from the repository
+  issues: write         # Required to create and manage GitHub Issues
+  contents: read        # Required to read PRD files from the repository
+  pull-requests: write  # Required to post preview comments (dry-run mode)
 ```
 
 ## How It Works
@@ -167,10 +174,43 @@ Generated issues include:
 
 This action supports multiple workflows:
 
-- **Main Generation**: Triggered on PRD file changes
+- **Main Generation**: Triggered on PRD file changes (push events)
+- **Dry-Run Preview**: Triggered on pull requests with PRD changes
 - **Dependency Watching**: Monitors issue closures and updates blocked status
 - **Manual Breakdown**: Supports `/breakdown` commands for on-demand task creation
 - **Replay/Recovery**: Recovers from failures using stored artifacts
+
+### Dry-Run Mode
+
+When triggered by pull request events, the action automatically runs in dry-run mode:
+
+- **No Issues Created**: Task graph is generated but no GitHub Issues are created
+- **Preview Comment**: Posts a formatted markdown comment showing the task structure
+- **Comment Updates**: Updates existing preview comments when PRD files are changed
+- **Manual Toggle**: Can be enabled manually using the `dry-run` input
+
+Example workflow with pull request support:
+
+```yaml
+name: Generate Tasks from PRDs
+on:
+  push:
+    paths:
+      - 'docs/**.prd.md'
+  pull_request:
+    paths:
+      - 'docs/**.prd.md'  # Automatically enables dry-run mode
+
+jobs:
+  generate-tasks:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: cmbrose/task-master-issues-justtasks@v1
+```
 
 ## Example PRD Structure
 

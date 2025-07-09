@@ -52,10 +52,12 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.handleIssueClosure = handleIssueClosure;
 const rest_1 = require("@octokit/rest");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const dotenv = __importStar(require("dotenv"));
+const issue_hierarchy_1 = require("./src/issue-hierarchy");
 // Types for Node.js globals (process, etc.)
 // If you see type errors, run: npm install --save-dev @types/node
 dotenv.config();
@@ -67,6 +69,7 @@ if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
     process.exit(1);
 }
 const octokit = new rest_1.Octokit({ auth: GITHUB_TOKEN });
+const hierarchyManager = new issue_hierarchy_1.IssueHierarchyManager(octokit, GITHUB_OWNER, GITHUB_REPO);
 const TASKS_PATH = path.join('.taskmaster', 'tasks', 'tasks.json');
 const COMPLEXITY_PATH = path.join('.taskmaster', 'reports', 'task-complexity-report.json');
 const UNIQUE_MARKER = '<!-- created-by-taskmaster-script -->';
@@ -83,10 +86,21 @@ catch (e) {
     // If not found or invalid, skip
     complexityMap = {};
 }
-// Helper to create issue body
+// Helper to create issue body with YAML front-matter
 function buildIssueBody(task) {
     var _a, _b, _c;
-    let body = '';
+    // Create metadata for YAML front-matter
+    const metadata = {
+        id: task.id,
+        title: task.title,
+        dependencies: task.dependencies,
+        priority: task.priority,
+        status: task.status,
+        complexity: task.id in complexityMap ? complexityMap[task.id] : undefined
+    };
+    // Generate YAML front-matter
+    const yamlFrontMatter = hierarchyManager.generateYAMLFrontMatter(metadata);
+    let body = yamlFrontMatter;
     if ('details' in task && task.details) {
         body += `## Details\n${task.details}\n\n`;
     }
@@ -150,12 +164,31 @@ function createOrGetIssue(task) {
             console.log(`Issue already exists for: ${task.title} (#${existingIssue.number})`);
             return Object.assign(Object.assign({}, existingIssue), { expectedBody: body });
         }
+        // Determine initial labels
+        const labels = ['taskmaster'];
+        // Add priority label if available
+        if (task.priority) {
+            labels.push(`priority:${task.priority}`);
+        }
+        // Add complexity label if available
+        if (task.id in complexityMap && complexityMap[task.id]) {
+            const complexity = complexityMap[task.id];
+            if (complexity >= 7) {
+                labels.push('complexity:high');
+            }
+            else if (complexity >= 4) {
+                labels.push('complexity:medium');
+            }
+            else {
+                labels.push('complexity:low');
+            }
+        }
         const res = yield octokit.issues.create({
             owner: GITHUB_OWNER,
             repo: GITHUB_REPO,
             title: task.title,
             body,
-            labels: ['taskmaster'],
+            labels,
         });
         allIssuesCache.push(res.data);
         console.log(`Created issue: ${task.title} (#${res.data.number})`);
@@ -188,7 +221,7 @@ function getSubIssues(issue) {
 }
 function main() {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a, _b;
+        var _a, _b, _c;
         // Parse JSON
         const raw = fs.readFileSync(TASKS_PATH, 'utf-8');
         const data = JSON.parse(raw);
@@ -200,8 +233,7 @@ function main() {
             const issue = yield createOrGetIssue(task);
             idToIssue[`${task.id}`] = issue;
         }
-        // Update issues with dependency links
-        // For parent tasks
+        // Update issues with dependency links and manage blocked status
         for (const task of tasks) {
             const issue = idToIssue[`${task.id}`];
             const depIssues = (_a = task.dependencies) === null || _a === void 0 ? void 0 : _a.map(depId => idToIssue[`${depId}`]).filter(Boolean);
@@ -217,8 +249,38 @@ function main() {
                 });
                 console.log(`Updated issue #${issue.number} with dependencies/required-bys.`);
             }
+            // Update blocked status based on dependencies
+            yield hierarchyManager.updateBlockedStatus(issue.number);
         }
-        console.log('All issues created and linked.');
+        // Create parent-child relationships using Sub-issues API
+        for (const task of tasks) {
+            const issue = idToIssue[`${task.id}`];
+            // Create sub-issue relationships for subtasks
+            if ((_c = task.subtasks) === null || _c === void 0 ? void 0 : _c.length) {
+                for (const subtask of task.subtasks) {
+                    const subtaskIssue = idToIssue[`${subtask.id}`];
+                    if (subtaskIssue) {
+                        yield hierarchyManager.createSubIssue(issue.number, subtaskIssue.number);
+                    }
+                }
+            }
+        }
+        console.log('All issues created, linked, and hierarchy established.');
+    });
+}
+// Helper function to handle issue closure and dependency resolution
+// This would typically be called by a GitHub webhook when an issue is closed
+function handleIssueClosure(closedIssueNumber) {
+    return __awaiter(this, void 0, void 0, function* () {
+        console.log(`Handling closure of issue #${closedIssueNumber}`);
+        try {
+            // Resolve dependencies for all issues that depend on this closed issue
+            yield hierarchyManager.resolveDependencies(closedIssueNumber);
+            console.log(`Dependency resolution completed for issue #${closedIssueNumber}`);
+        }
+        catch (error) {
+            console.error(`Error handling closure of issue #${closedIssueNumber}:`, error);
+        }
     });
 }
 main().catch(e => {

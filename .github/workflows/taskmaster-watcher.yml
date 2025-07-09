@@ -1,0 +1,125 @@
+---
+name: Dependency Watcher Workflow
+
+on:
+  issues:
+    types: [closed]
+  schedule:
+    # Run every 10 minutes to scan for blocked status updates
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Manually specify an issue number to process (for testing)'
+        required: false
+        type: string
+      scan_all:
+        description: 'Force scan all issues for blocked status updates'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  dependency-watcher:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+
+      - name: Build TypeScript
+        run: |
+          npm run build
+
+      - name: Determine execution mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            echo "mode=webhook" >> $GITHUB_OUTPUT
+            echo "issue_number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+            echo "Webhook mode: Processing issue #${{ github.event.issue.number }}"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "mode=cron" >> $GITHUB_OUTPUT
+            echo "Cron mode: Scanning all issues for blocked status updates"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ github.event.inputs.scan_all }}" = "true" ]; then
+              echo "mode=cron" >> $GITHUB_OUTPUT
+              echo "Manual mode: Scanning all issues for blocked status updates"
+            elif [ -n "${{ github.event.inputs.issue_number }}" ]; then
+              echo "mode=webhook" >> $GITHUB_OUTPUT
+              echo "issue_number=${{ github.event.inputs.issue_number }}" >> $GITHUB_OUTPUT
+              echo "Manual mode: Processing issue #${{ github.event.inputs.issue_number }}"
+            else
+              echo "mode=cron" >> $GITHUB_OUTPUT
+              echo "Manual mode: Scanning all issues for blocked status updates (default)"
+            fi
+          else
+            echo "mode=cron" >> $GITHUB_OUTPUT
+            echo "Unknown trigger: Defaulting to cron mode"
+          fi
+
+      - name: Run dependency watcher
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO: ${{ github.event.repository.name }}
+          ISSUE_NUMBER: ${{ steps.mode.outputs.issue_number }}
+        run: |
+          echo "Running dependency watcher in ${{ steps.mode.outputs.mode }} mode"
+
+          if [ "${{ steps.mode.outputs.mode }}" = "webhook" ]; then
+            echo "Processing issue closure for #${{ steps.mode.outputs.issue_number }}"
+          else
+            echo "Scanning all issues for blocked status updates"
+          fi
+
+          # Run the dependency watcher script
+          node src/dependency-watcher.js
+
+          echo "Dependency watcher completed successfully"
+
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## Dependency Watcher Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow**: ${{ github.workflow }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Mode**: ${{ steps.mode.outputs.mode }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.mode.outputs.mode }}" = "webhook" ]; then
+            echo "- **Issue Processed**: #${{ steps.mode.outputs.issue_number }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Action**: Resolved dependencies for closed issue" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Action**: Scanned all issues for blocked status updates" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Performance Notes" >> $GITHUB_STEP_SUMMARY
+          echo "- **Batch Processing**: Enabled for efficiency" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target Latency**: < 15 minutes (median blocked→unblocked)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cron Schedule**: Every 10 minutes" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Issue Closure Details" >> $GITHUB_STEP_SUMMARY
+            echo "- **Closed Issue**: #${{ github.event.issue.number }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Title**: ${{ github.event.issue.title }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Closed By**: ${{ github.event.issue.user.login }}" >> $GITHUB_STEP_SUMMARY
+          fi

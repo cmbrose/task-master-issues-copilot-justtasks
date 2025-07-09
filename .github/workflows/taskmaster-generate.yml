@@ -4,6 +4,9 @@ on:
   push:
     paths:
       - 'docs/**.prd.md'
+  pull_request:
+    paths:
+      - 'docs/**.prd.md'
   workflow_dispatch:
     inputs:
       complexity-threshold:
@@ -26,6 +29,11 @@ on:
         required: false
         default: false
         type: boolean
+      dry-run:
+        description: 'Enable dry-run mode (preview only, no issues created)'
+        required: false
+        default: false
+        type: boolean
   schedule:
     # Run daily at 6 AM UTC to check for any missed PRD updates
     - cron: '0 6 * * *'
@@ -36,7 +44,7 @@ jobs:
     permissions:
       contents: read
       issues: write
-      pull-requests: read
+      pull-requests: write
     
     steps:
       - name: Checkout repository
@@ -61,11 +69,22 @@ jobs:
           # Check if any PRD files exist
           PRD_PATTERN="${{ github.event.inputs.prd-path-glob || 'docs/**.prd.md' }}"
           
-          if [ "${{ github.event_name }}" = "schedule" ]; then
+          # Detect dry-run mode for pull requests
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "Pull request detected - enabling dry-run mode"
+            echo "is-dry-run=true" >> $GITHUB_OUTPUT
+            echo "should-run=true" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.inputs.dry-run }}" = "true" ]; then
+            echo "Manual dry-run mode enabled"
+            echo "is-dry-run=true" >> $GITHUB_OUTPUT
+            echo "should-run=true" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
             echo "Scheduled run - processing all PRD files matching pattern: $PRD_PATTERN"
+            echo "is-dry-run=false" >> $GITHUB_OUTPUT
             echo "should-run=true" >> $GITHUB_OUTPUT
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "Manual dispatch - processing all PRD files matching pattern: $PRD_PATTERN"
+            echo "is-dry-run=false" >> $GITHUB_OUTPUT
             echo "should-run=true" >> $GITHUB_OUTPUT
           else
             # For push events, check if any PRD files changed
@@ -73,9 +92,11 @@ jobs:
             if [ -n "$PRD_FILES" ]; then
               echo "Found PRD files to process:"
               echo "$PRD_FILES"
+              echo "is-dry-run=false" >> $GITHUB_OUTPUT
               echo "should-run=true" >> $GITHUB_OUTPUT
             else
               echo "No PRD files found matching pattern: $PRD_PATTERN"
+              echo "is-dry-run=false" >> $GITHUB_OUTPUT
               echo "should-run=false" >> $GITHUB_OUTPUT
             fi
           fi
@@ -126,7 +147,7 @@ jobs:
           echo "task-count=$TASK_COUNT" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Issues
-        if: steps.check-prds.outputs.should-run == 'true' && success()
+        if: steps.check-prds.outputs.should-run == 'true' && steps.check-prds.outputs.is-dry-run == 'false' && success()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_OWNER: ${{ github.repository_owner }}
@@ -143,6 +164,42 @@ jobs:
           
           echo "Creating GitHub issues for $TASK_COUNT tasks..."
           node create-issues.js
+
+      - name: Post Preview Comment
+        if: steps.check-prds.outputs.should-run == 'true' && steps.check-prds.outputs.is-dry-run == 'true' && success() && github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          # Check if we have tasks to process
+          TASK_COUNT=$(jq '.master.tasks | length' .taskmaster/tasks/tasks.json 2>/dev/null || echo "0")
+          
+          if [ "$TASK_COUNT" -eq 0 ]; then
+            echo "No tasks to process, skipping preview comment"
+            exit 0
+          fi
+          
+          echo "Posting preview comment for $TASK_COUNT tasks..."
+          node post-preview-comment.js
+
+      - name: Show Dry-Run Results
+        if: steps.check-prds.outputs.should-run == 'true' && steps.check-prds.outputs.is-dry-run == 'true' && success() && github.event_name != 'pull_request'
+        run: |
+          # Check if we have tasks to process
+          TASK_COUNT=$(jq '.master.tasks | length' .taskmaster/tasks/tasks.json 2>/dev/null || echo "0")
+          
+          if [ "$TASK_COUNT" -eq 0 ]; then
+            echo "No tasks to process in dry-run mode"
+            exit 0
+          fi
+          
+          echo "DRY-RUN MODE: $TASK_COUNT tasks would be created:"
+          echo "=============================================="
+          jq -r '.master.tasks[] | "- \(.title) (Priority: \(.priority // "medium"), Complexity: \(.complexity // "unknown")/10)"' .taskmaster/tasks/tasks.json
+          echo "=============================================="
+          echo "No issues were created because dry-run mode is enabled."
 
       - name: Upload task graph artifact
         if: steps.check-prds.outputs.should-run == 'true' && always()
@@ -161,6 +218,7 @@ jobs:
           echo "- **Repository**: ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dry Run Mode**: ${{ steps.check-prds.outputs.is-dry-run || 'false' }}" >> $GITHUB_STEP_SUMMARY
           
           if [ "${{ steps.check-prds.outputs.should-run }}" = "false" ]; then
             echo "- **Status**: Skipped (no PRD files found)" >> $GITHUB_STEP_SUMMARY
@@ -174,6 +232,12 @@ jobs:
             echo "- **Complexity Threshold**: $COMPLEXITY_THRESHOLD" >> $GITHUB_STEP_SUMMARY
             echo "- **Max Depth**: $MAX_DEPTH" >> $GITHUB_STEP_SUMMARY
             echo "- **PRD Files**: $PRD_FILES" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "${{ steps.check-prds.outputs.is-dry-run }}" = "true" ]; then
+              echo "- **Action**: Preview comment posted to PR #${{ github.event.number }}" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- **Action**: GitHub issues created" >> $GITHUB_STEP_SUMMARY
+            fi
           else
             echo "- **Tasks Generated**: 0 (no task graph found)" >> $GITHUB_STEP_SUMMARY
           fi
@@ -195,4 +259,8 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Changed Files" >> $GITHUB_STEP_SUMMARY
             echo "This run was triggered by changes to PRD files." >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Pull Request Preview" >> $GITHUB_STEP_SUMMARY
+            echo "This run was triggered by a pull request. A preview comment has been posted to PR #${{ github.event.number }}." >> $GITHUB_STEP_SUMMARY
           fi

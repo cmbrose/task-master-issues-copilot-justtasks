@@ -34,6 +34,7 @@ inputs:
     required: false
     default: ''
 
+<<<<<<< HEAD
   replay-artifact-id:
     description: 'ID of artifact to replay (for recovery workflows)'
     required: false
@@ -41,6 +42,10 @@ inputs:
 
   cleanup-artifacts:
     description: 'Whether to cleanup expired artifacts'
+=======
+  dry-run:
+    description: 'Enable dry-run mode (preview only, no issues created)'
+>>>>>>> origin/main
     required: false
     default: 'false'
 
@@ -93,6 +98,7 @@ runs:
 
     - name: Create GitHub Issues
       id: create-issues
+      if: ${{ inputs.dry-run != 'true' }}
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -100,3 +106,15 @@ runs:
         GITHUB_REPO: ${{ github.event.repository.name }}
       run: |
         node create-issues.js
+
+    - name: Post Preview Comment (Dry Run)
+      id: post-preview
+      if: ${{ inputs.dry-run == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_OWNER: ${{ github.repository_owner }}
+        GITHUB_REPO: ${{ github.event.repository.name }}
+        PR_NUMBER: ${{ github.event.number }}
+      run: |
+        node post-preview-comment.js
