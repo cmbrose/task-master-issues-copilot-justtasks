@@ -9,8 +9,10 @@ This GitHub Action automatically generates GitHub Issues from PRD (Product Requi
 - 🔒 Secure CLI binary management with checksum validation
 - 🏗️ Hierarchical task structure with dependencies
 - 🏷️ Automatic labeling and blocking status management
-- 📦 Artifact storage for task graphs
-- 🔁 Replay and recovery capabilities
+- 📦 Artifact storage for task graphs with enhanced metadata
+- 🔁 Replay and recovery capabilities from stored artifacts
+- 🗂️ Configurable retention policies for artifact cleanup
+- 📝 Structured logging for all artifact operations
 - ⚙️ Configurable complexity thresholds and depth limits
 - 🔍 **Dry-run mode** with preview comments for pull requests
 - 📝 **Pull request integration** with automatic task previews
@@ -78,6 +80,8 @@ jobs:
 | `prd-path-glob` | Glob pattern for PRD files to process | No | `docs/**.prd.md` |
 | `breakdown-max-depth` | Maximum depth for task breakdown | No | `2` |
 | `taskmaster-args` | Additional arguments to pass to Taskmaster CLI | No | `''` |
+| `replay-artifact-id` | ID of artifact to replay (for recovery workflows) | No | `''` |
+| `cleanup-artifacts` | Whether to cleanup expired artifacts | No | `false` |
 | `dry-run` | Enable dry-run mode (preview only, no issues created) | No | `false` |
 
 ## Outputs
@@ -106,7 +110,53 @@ permissions:
 4. **Complexity Filtering**: Filters tasks based on the complexity threshold (≤40 default)
 5. **Issue Creation**: Creates GitHub Issues with proper metadata and dependencies
 6. **Labeling**: Applies appropriate labels including 'task' and 'blocked' status
-7. **Artifact Storage**: Stores task graphs as artifacts for replay capabilities
+7. **Artifact Storage**: Stores enhanced task graphs as GitHub Actions artifacts with comprehensive metadata
+8. **Retention Management**: Automatically manages artifact retention based on configurable policies
+
+## Artifact Management
+
+The action now provides comprehensive artifact management capabilities:
+
+### Enhanced Metadata
+Each artifact includes:
+- **Task Complexity Scores**: Min, max, and average complexity values
+- **Hierarchy Depth**: Maximum dependency depth in the task graph
+- **PRD Version**: Hash-based versioning of source PRD files
+- **Generation Timestamp**: ISO timestamp of artifact creation
+- **Retention Policy**: Configurable retention settings
+
+### Replay Functionality
+Restore previous task graphs using stored artifacts:
+```yaml
+- uses: cmbrose/task-master-issues-justtasks@v1
+  with:
+    replay-artifact-id: 'taskmaster-task-graph-2024-01-15T10-30-00'
+```
+
+### Retention Policies
+Configure automatic cleanup of expired artifacts:
+```yaml
+- uses: cmbrose/task-master-issues-justtasks@v1
+  with:
+    cleanup-artifacts: 'true'
+  env:
+    ARTIFACT_RETENTION_DAYS: '30d'
+    ARTIFACT_RETENTION_COUNT: '10'
+```
+
+### Structured Logging
+All artifact operations are logged with structured data:
+```json
+{
+  "timestamp": "2024-01-15T10:30:00.000Z",
+  "operation": "upload",
+  "location": "artifacts/taskmaster/task-graph.json",
+  "taskCount": 25,
+  "complexityScores": {"min": 2, "max": 8, "average": 5.2},
+  "hierarchyDepth": 4,
+  "prdVersion": "prd-abc123"
+}
+```
 
 ## Task Issue Format
 

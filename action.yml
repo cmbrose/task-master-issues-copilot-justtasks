@@ -34,6 +34,16 @@ inputs:
     required: false
     default: ''
 
+  replay-artifact-id:
+    description: 'ID of artifact to replay (for recovery workflows)'
+    required: false
+    default: ''
+
+  cleanup-artifacts:
+    description: 'Whether to cleanup expired artifacts'
+    required: false
+    default: 'false'
+
   dry-run:
     description: 'Enable dry-run mode (preview only, no issues created)'
     required: false
@@ -81,6 +91,8 @@ runs:
         INPUT_PRD_PATH_GLOB: ${{ inputs.prd-path-glob }}
         INPUT_BREAKDOWN_MAX_DEPTH: ${{ inputs.breakdown-max-depth }}
         INPUT_TASKMASTER_ARGS: ${{ inputs.taskmaster-args }}
+        INPUT_REPLAY_ARTIFACT_ID: ${{ inputs.replay-artifact-id }}
+        INPUT_CLEANUP_ARTIFACTS: ${{ inputs.cleanup-artifacts }}
       run: |
         node src/main.js
 
