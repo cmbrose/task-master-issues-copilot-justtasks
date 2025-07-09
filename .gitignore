@@ -1,0 +1,8 @@
+node_modules/
+*.log
+.env
+.DS_Store
+.taskmaster-cli/
+*.js.map
+src/*.js
+mock-taskmaster-cli.js

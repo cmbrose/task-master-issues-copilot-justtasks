@@ -62,18 +62,19 @@ runs:
       run: |
         npm ci
 
+    - name: Build TypeScript
+      shell: bash
+      run: |
+        npm run build
+
     - name: Generate task graph
       id: generate
       shell: bash
+      env:
+        INPUT_COMPLEXITY_THRESHOLD: ${{ inputs.complexity-threshold }}
+        INPUT_MAX_DEPTH: ${{ inputs.max-depth }}
+        INPUT_PRD_PATH_GLOB: ${{ inputs.prd-path-glob }}
+        INPUT_BREAKDOWN_MAX_DEPTH: ${{ inputs.breakdown-max-depth }}
+        INPUT_TASKMASTER_ARGS: ${{ inputs.taskmaster-args }}
       run: |
-        echo "This is a placeholder for the actual task generation logic"
-        echo "Inputs:"
-        echo "  complexity-threshold: ${{ inputs.complexity-threshold }}"
-        echo "  max-depth: ${{ inputs.max-depth }}"
-        echo "  prd-path-glob: ${{ inputs.prd-path-glob }}"
-        echo "  breakdown-max-depth: ${{ inputs.breakdown-max-depth }}"
-        echo "  taskmaster-args: ${{ inputs.taskmaster-args }}"
-
-        # Placeholder outputs
-        echo "task-count=0" >> $GITHUB_OUTPUT
-        echo "artifact-url=" >> $GITHUB_OUTPUT
+        node src/main.js
