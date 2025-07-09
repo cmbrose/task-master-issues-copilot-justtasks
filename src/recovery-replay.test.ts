@@ -216,8 +216,8 @@ describe('Recovery and Replay Functionality', () => {
         }
       };
 
-      // Access private method for testing
-      const categorizeError = (action as any).categorizeError;
+      // Access private method for testing with proper context
+      const categorizeError = (action as any).categorizeError.bind(action);
       const category = categorizeError(rateLimitError);
 
       expect(category.type).toBe('rate_limit');
@@ -231,7 +231,7 @@ describe('Recovery and Replay Functionality', () => {
         message: 'Connection reset'
       };
 
-      const categorizeError = (action as any).categorizeError;
+      const categorizeError = (action as any).categorizeError.bind(action);
       const category = categorizeError(networkError);
 
       expect(category.type).toBe('network');
@@ -245,7 +245,7 @@ describe('Recovery and Replay Functionality', () => {
         message: 'Validation failed'
       };
 
-      const categorizeError = (action as any).categorizeError;
+      const categorizeError = (action as any).categorizeError.bind(action);
       const category = categorizeError(validationError);
 
       expect(category.type).toBe('validation');
