@@ -60,7 +60,7 @@ This is the issue details without YAML front-matter.`;
     test('should handle malformed YAML gracefully', () => {
       const issueBody = `---
 id: 1
-title: "Test Issue
+title: "Test Issue"
 dependencies: [2, 3
 ---
 

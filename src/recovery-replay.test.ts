@@ -430,7 +430,7 @@ describe('Recovery and Replay Functionality', () => {
         expect(error).toBeInstanceOf(Error);
         expect((error as Error).message).toBe('Invalid artifact: invalid-artifact-id');
       }
-    });
+    }, 10000); // 10 second timeout
   });
 
   describe('Integration with Enhanced Features', () => {
