@@ -55,12 +55,39 @@ jobs:
         run: |
           npm ci
 
+      - name: Check for PRD files
+        id: check-prds
+        run: |
+          # Check if any PRD files exist
+          PRD_PATTERN="${{ github.event.inputs.prd-path-glob || 'docs/**.prd.md' }}"
+          
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "Scheduled run - processing all PRD files matching pattern: $PRD_PATTERN"
+            echo "should-run=true" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual dispatch - processing all PRD files matching pattern: $PRD_PATTERN"
+            echo "should-run=true" >> $GITHUB_OUTPUT
+          else
+            # For push events, check if any PRD files changed
+            PRD_FILES=$(find . -name "*.prd.md" -path "./docs/*" | head -5)
+            if [ -n "$PRD_FILES" ]; then
+              echo "Found PRD files to process:"
+              echo "$PRD_FILES"
+              echo "should-run=true" >> $GITHUB_OUTPUT
+            else
+              echo "No PRD files found matching pattern: $PRD_PATTERN"
+              echo "should-run=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
       - name: Build TypeScript
+        if: steps.check-prds.outputs.should-run == 'true'
         run: |
           npm run build
 
       - name: Generate task graph
         id: generate-graph
+        if: steps.check-prds.outputs.should-run == 'true'
         env:
           INPUT_COMPLEXITY_THRESHOLD: ${{ github.event.inputs.complexity-threshold || '40' }}
           INPUT_MAX_DEPTH: ${{ github.event.inputs.max-depth || '3' }}
@@ -70,18 +97,55 @@ jobs:
         run: |
           node src/main.js
 
+      - name: Validate task graph
+        if: steps.check-prds.outputs.should-run == 'true' && success()
+        run: |
+          echo "Validating generated task graph..."
+          
+          # Check if task graph file exists
+          if [ ! -f .taskmaster/tasks/tasks.json ]; then
+            echo "Error: Task graph file not found"
+            exit 1
+          fi
+          
+          # Validate JSON structure
+          if ! jq empty .taskmaster/tasks/tasks.json; then
+            echo "Error: Invalid JSON in task graph"
+            exit 1
+          fi
+          
+          # Check if tasks array exists and is not empty
+          TASK_COUNT=$(jq '.master.tasks | length' .taskmaster/tasks/tasks.json)
+          if [ "$TASK_COUNT" -eq 0 ]; then
+            echo "Warning: No tasks found in task graph"
+            echo "task-count=0" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "Task graph validation successful: $TASK_COUNT tasks found"
+          echo "task-count=$TASK_COUNT" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Issues
-        if: success()
+        if: steps.check-prds.outputs.should-run == 'true' && success()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_OWNER: ${{ github.repository_owner }}
           GITHUB_REPO: ${{ github.event.repository.name }}
           FORCE_REGENERATE: ${{ github.event.inputs.force-regenerate || 'false' }}
         run: |
+          # Check if we have tasks to process
+          TASK_COUNT=$(jq '.master.tasks | length' .taskmaster/tasks/tasks.json 2>/dev/null || echo "0")
+          
+          if [ "$TASK_COUNT" -eq 0 ]; then
+            echo "No tasks to process, skipping issue creation"
+            exit 0
+          fi
+          
+          echo "Creating GitHub issues for $TASK_COUNT tasks..."
           node create-issues.js
 
       - name: Upload task graph artifact
-        if: always()
+        if: steps.check-prds.outputs.should-run == 'true' && always()
         uses: actions/upload-artifact@v4
         with:
           name: task-graph-${{ github.run_id }}
@@ -98,13 +162,37 @@ jobs:
           echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           
-          if [ -f .taskmaster/tasks/tasks.json ]; then
+          if [ "${{ steps.check-prds.outputs.should-run }}" = "false" ]; then
+            echo "- **Status**: Skipped (no PRD files found)" >> $GITHUB_STEP_SUMMARY
+          elif [ -f .taskmaster/tasks/tasks.json ]; then
             TASK_COUNT=$(jq '.master.tasks | length' .taskmaster/tasks/tasks.json)
+            COMPLEXITY_THRESHOLD=$(jq '.master.metadata.complexityThreshold' .taskmaster/tasks/tasks.json)
+            MAX_DEPTH=$(jq '.master.metadata.maxDepth' .taskmaster/tasks/tasks.json)
+            PRD_FILES=$(jq '.master.metadata.prdFiles | join(", ")' .taskmaster/tasks/tasks.json)
+            
             echo "- **Tasks Generated**: $TASK_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "- **Complexity Threshold**: $COMPLEXITY_THRESHOLD" >> $GITHUB_STEP_SUMMARY
+            echo "- **Max Depth**: $MAX_DEPTH" >> $GITHUB_STEP_SUMMARY
+            echo "- **PRD Files**: $PRD_FILES" >> $GITHUB_STEP_SUMMARY
           else
             echo "- **Tasks Generated**: 0 (no task graph found)" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
-          echo "- [Task Graph](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Complexity Threshold**: ${{ github.event.inputs.complexity-threshold || '40' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Max Depth**: ${{ github.event.inputs.max-depth || '3' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **PRD Path Glob**: ${{ github.event.inputs.prd-path-glob || 'docs/**.prd.md' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Force Regenerate**: ${{ github.event.inputs.force-regenerate || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.check-prds.outputs.should-run }}" = "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+            echo "- [Task Graph](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Changed Files" >> $GITHUB_STEP_SUMMARY
+            echo "This run was triggered by changes to PRD files." >> $GITHUB_STEP_SUMMARY
+          fi
