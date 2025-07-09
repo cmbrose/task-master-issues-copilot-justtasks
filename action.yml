@@ -1,0 +1,79 @@
+---
+name: 'Taskmaster Issues Generator'
+description: >
+  Automatically generate GitHub Issues from PRD files using Taskmaster CLI
+author: 'cmbrose'
+branding:
+  icon: 'layers'
+  color: 'blue'
+
+inputs:
+  complexity-threshold:
+    description: 'Maximum complexity threshold for tasks (default: 40)'
+    required: false
+    default: '40'
+
+  max-depth:
+    description: 'Maximum depth for task hierarchy (default: 3)'
+    required: false
+    default: '3'
+
+  prd-path-glob:
+    description: >
+      Glob pattern for PRD files to process (default: docs/**.prd.md)
+    required: false
+    default: 'docs/**.prd.md'
+
+  breakdown-max-depth:
+    description: 'Maximum depth for task breakdown (default: 2)'
+    required: false
+    default: '2'
+
+  taskmaster-args:
+    description: 'Additional arguments to pass to Taskmaster CLI'
+    required: false
+    default: ''
+
+outputs:
+  task-count:
+    description: 'Number of tasks generated'
+    value: ${{ steps.generate.outputs.task-count }}
+
+  artifact-url:
+    description: 'URL to the generated task graph artifact'
+    value: ${{ steps.generate.outputs.artifact-url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        npm ci
+
+    - name: Generate task graph
+      id: generate
+      shell: bash
+      run: |
+        echo "This is a placeholder for the actual task generation logic"
+        echo "Inputs:"
+        echo "  complexity-threshold: ${{ inputs.complexity-threshold }}"
+        echo "  max-depth: ${{ inputs.max-depth }}"
+        echo "  prd-path-glob: ${{ inputs.prd-path-glob }}"
+        echo "  breakdown-max-depth: ${{ inputs.breakdown-max-depth }}"
+        echo "  taskmaster-args: ${{ inputs.taskmaster-args }}"
+
+        # Placeholder outputs
+        echo "task-count=0" >> $GITHUB_OUTPUT
+        echo "artifact-url=" >> $GITHUB_OUTPUT
