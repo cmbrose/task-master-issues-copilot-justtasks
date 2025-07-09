@@ -1,0 +1,50 @@
+name: Auto Publish and Merge PR on Assignment
+
+on:
+#  pull_request:
+#    types: [review_requested]
+  schedule:
+    - cron: '*/5 * * * *' # every 5 minutes
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Manually specify a PR number to process (optional)'
+        required: false
+        type: string
+
+jobs:
+  publish-and-merge:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event.requested_reviewer.login == 'cmbrose'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: |
+          npm install @octokit/rest @octokit/graphql
+          npm install -g ts-node
+
+      - name: Set PR_NUMBER env (for PR event or workflow_dispatch)
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        id: set-pr
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.pr_number }}" ]; then
+            echo "PR_NUMBER=${{ github.event.inputs.pr_number }}" >> $GITHUB_ENV
+          fi
+
+      - name: Auto-publish and merge PR (TypeScript)
+        env:
+          GITHUB_GRAPHQL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_MERGE_TOKEN: ${{ secrets.ISSUE_ASSIGNMENT_PAT }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          REPO: ${{ github.repository }}
+        run: |
+          ts-node .github/workflows/scripts/auto-publish-merge.ts 

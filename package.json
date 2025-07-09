@@ -1,0 +1,29 @@
+{
+    "name": "taskmaster-github-issue-sync",
+    "version": "1.0.0",
+    "description": "Script to sync Taskmaster tasks to GitHub issues, including sub-issue and dependency linking.",
+    "main": "create-issues.ts",
+    "scripts": {
+        "start": "ts-node create-issues.ts",
+        "build": "tsc create-issues.ts",
+        "lint": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@octokit/rest": "^20.0.0",
+        "dotenv": "^16.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "ts-node": "^10.0.0",
+        "typescript": "^5.0.0"
+    },
+    "keywords": [
+        "github",
+        "issues",
+        "taskmaster",
+        "typescript",
+        "automation"
+    ],
+    "author": "",
+    "license": "MIT"
+}

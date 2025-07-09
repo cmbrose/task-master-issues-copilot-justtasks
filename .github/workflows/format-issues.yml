@@ -1,0 +1,60 @@
+name: Reformat Issue Body
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue-number:
+        description: 'Issue number to re-format'
+        required: true
+        type: string
+
+jobs:
+  format-issue:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+      models: read
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install tools
+        run: |
+          pip install --quiet llm
+          llm install llm-github-models
+          sudo apt-get update -qq
+          sudo apt-get install -yqq jq
+
+      - name: Resolve issue number
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            echo "ISSUE_NUMBER=${{ github.event.issue.number }}" >> $GITHUB_ENV
+          else
+            echo "ISSUE_NUMBER=${{ inputs.issue-number }}" >> $GITHUB_ENV
+          fi
+
+      - name: Re-format body with LLM
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_MODELS_KEY: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY=$(gh api repos/${{ github.repository }}/issues/${ISSUE_NUMBER} --jq .body)
+          NEW_BODY=$(printf '%s' "$BODY" | llm -m github/gpt-4o --system " \
+             Improve the formatting of this GitHub issue body. \
+             Preserve all headings, sections, and comments exactly (do not add HRs). \
+             Only clean up markdown, code blocks, and lists or the content for readability. \
+          ")
+
+          # Escape comments in the original body so that the new comment block isn't broken
+          ESCAPED_BODY=$(printf '%s' "$BODY" | sed 's/<!--/&lt;!--/g; s/-->/--&gt;/g')
+
+          BODY_WITH_BACKUP="$(printf '%s\n\n<!--\nORIGINAL ISSUE BODY (before reformat):\n\n%s\n-->' "$NEW_BODY" "$ESCAPED_BODY")"
+          
+          gh api --method PATCH repos/${{ github.repository }}/issues/${ISSUE_NUMBER} -f body="$BODY_WITH_BACKUP"

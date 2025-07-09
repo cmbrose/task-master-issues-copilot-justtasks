@@ -1,0 +1,89 @@
+name: Auto Resolve Merge Conflicts
+
+on:
+  repository_dispatch:
+    types: [copilot_conflict]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to check for conflicts (required)'
+        required: true
+        type: string
+
+jobs:
+  notify-copilot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR info
+        id: prinfo
+        run: |
+          # Use workflow_dispatch input if present, else use repository_dispatch payload
+          if [ -n "${{ github.event.inputs.pr_number }}" ]; then
+            PR_NUMBER="${{ github.event.inputs.pr_number }}"
+          else
+            PR_NUMBER="${{ github.event.client_payload.pr_number }}"
+          fi
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No PR number provided."
+            exit 1
+          fi
+          gh pr view $PR_NUMBER --json headRefName,baseRefName -q '.headRefName + "," + .baseRefName' > /tmp/pr_branches.txt
+          HEAD_BRANCH=$(cut -d, -f1 /tmp/pr_branches.txt)
+          BASE_BRANCH=$(cut -d, -f2 /tmp/pr_branches.txt)
+          echo "head_branch=$HEAD_BRANCH" >> $GITHUB_OUTPUT
+          echo "base_branch=$BASE_BRANCH" >> $GITHUB_OUTPUT
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Fetch PR and base branches
+        run: |
+          git fetch origin "${{ steps.prinfo.outputs.head_branch }}"
+          git fetch origin "${{ steps.prinfo.outputs.base_branch }}"
+
+      - name: Checkout base branch
+        run: |
+          git config --global user.email "auto-conflict-resolver@tools.com"
+          git config --global user.name "Conflict Resolver"
+          git checkout "${{ steps.prinfo.outputs.head_branch }}"
+
+      - name: Attempt merge and collect conflicts
+        id: merge
+        continue-on-error: true
+        run: |
+          git merge "origin/${{ steps.prinfo.outputs.base_branch }}" || true
+          git diff --name-only --diff-filter=U > /tmp/conflict_files.txt
+
+      - name: Commit and push conflicted merge (if any)
+        if: always()
+        run: |
+          if [ -s /tmp/conflict_files.txt ]; then            
+            git add .
+            git commit -m "Auto-merge with conflicts for PR #${{ steps.prinfo.outputs.pr_number }}"
+            git push --force
+          fi
+
+      - name: Comment on PR about conflicts
+        if: always()
+        run: |
+          if [ -s /tmp/conflict_files.txt ]; then
+            gh pr comment ${{ steps.prinfo.outputs.pr_number }} --body "\
+          ⚠️ Merge conflicts detected!</br> \
+          A commit has been made that merges HEAD and retains merge conflict markers.</br> \
+          Please resolve the conflicts in that branch and update the PR.</br> \
+          REMEMBER - conflicting changes were made for a reason and are required for different work. \
+          DO NOT just delete work which you don't know about. Update your work to coexist with the conflicting change. \
+            "
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.ISSUE_ASSIGNMENT_PAT }}
+
+          
