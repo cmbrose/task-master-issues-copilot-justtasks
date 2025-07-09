@@ -13,6 +13,10 @@ export interface IssueMetadata {
   complexity?: number;
   priority?: string;
   status?: string;
+  breakdown_performed?: boolean;
+  breakdown_timestamp?: string;
+  breakdown_by?: string;
+  breakdown_sub_issues?: number[];
 }
 
 export interface ParsedIssue {
