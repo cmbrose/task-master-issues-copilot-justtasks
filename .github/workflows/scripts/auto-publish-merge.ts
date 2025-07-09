@@ -26,10 +26,6 @@ async function processPR(prNum: number) {
       pull_number: prNum,
     });
 
-    if (pr.mergeable) {
-        return;
-    }
-
     const prNodeId = pr.node_id;
 
     // Check if cmbrose is a requested reviewer
