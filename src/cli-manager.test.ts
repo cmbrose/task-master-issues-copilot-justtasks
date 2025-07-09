@@ -52,6 +52,69 @@ describe('TaskmasterCLIManager', () => {
     }).toThrow('Invalid output format: missing tasks array');
   });
 
+  test('should throw error for empty CLI output', () => {
+    expect(() => {
+      cliManager.parseOutput('');
+    }).toThrow('CLI output is empty');
+  });
+
+  test('should throw error for malformed JSON', () => {
+    const malformedOutput = '{"tasks": [{"id": 1, "title": "Test"}'; // Missing closing brackets
+    
+    expect(() => {
+      cliManager.parseOutput(malformedOutput);
+    }).toThrow('Failed to parse CLI output');
+  });
+
+  test('should validate task structure', () => {
+    const invalidTaskOutput = JSON.stringify({
+      tasks: [
+        {
+          id: 1,
+          title: 'Test Task'
+          // Missing description
+        }
+      ]
+    });
+    
+    expect(() => {
+      cliManager.parseOutput(invalidTaskOutput);
+    }).toThrow('Invalid task structure: missing required fields in task 1');
+  });
+
+  test('should validate task ID types', () => {
+    const invalidTaskOutput = JSON.stringify({
+      tasks: [
+        {
+          id: 'not-a-number',
+          title: 'Test Task',
+          description: 'Test description'
+        }
+      ]
+    });
+    
+    expect(() => {
+      cliManager.parseOutput(invalidTaskOutput);
+    }).toThrow('Invalid task ID: not-a-number must be a number');
+  });
+
+  test('should validate dependency types', () => {
+    const invalidTaskOutput = JSON.stringify({
+      tasks: [
+        {
+          id: 1,
+          title: 'Test Task',
+          description: 'Test description',
+          dependencies: ['not-a-number']
+        }
+      ]
+    });
+    
+    expect(() => {
+      cliManager.parseOutput(invalidTaskOutput);
+    }).toThrow('Invalid dependency ID: not-a-number must be a number');
+  });
+
   test('should filter tasks by complexity threshold', async () => {
     await cliManager.downloadAndValidate();
     
@@ -93,5 +156,49 @@ describe('TaskmasterCLIManager', () => {
     expect(taskGraph.master.metadata.prdFiles).toContain('docs/sample.prd.md');
     expect(taskGraph.master.metadata.created).toBeDefined();
     expect(taskGraph.master.metadata.updated).toBeDefined();
+    expect(taskGraph.master.metadata.tasksTotal).toBeDefined();
+    expect(taskGraph.master.metadata.tasksFiltered).toBeDefined();
+  });
+
+  test('should handle empty PRD files array', async () => {
+    await cliManager.downloadAndValidate();
+    
+    const options = {
+      complexityThreshold: 40,
+      maxDepth: 3,
+      prdPathGlob: 'docs/*.prd.md',
+      breakdownMaxDepth: 2,
+      additionalArgs: []
+    };
+
+    await expect(cliManager.generateTaskGraph([], options)).rejects.toThrow('No PRD files provided');
+  });
+
+  test('should validate options', async () => {
+    await cliManager.downloadAndValidate();
+    
+    const invalidOptions = {
+      complexityThreshold: -1,
+      maxDepth: 3,
+      prdPathGlob: 'docs/*.prd.md',
+      breakdownMaxDepth: 2,
+      additionalArgs: []
+    };
+
+    await expect(cliManager.generateTaskGraph(['docs/sample.prd.md'], invalidOptions)).rejects.toThrow('Complexity threshold must be non-negative');
+  });
+
+  test('should validate max depth', async () => {
+    await cliManager.downloadAndValidate();
+    
+    const invalidOptions = {
+      complexityThreshold: 40,
+      maxDepth: 0,
+      prdPathGlob: 'docs/*.prd.md',
+      breakdownMaxDepth: 2,
+      additionalArgs: []
+    };
+
+    await expect(cliManager.generateTaskGraph(['docs/sample.prd.md'], invalidOptions)).rejects.toThrow('Max depth must be at least 1');
   });
 });
