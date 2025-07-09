@@ -78,3 +78,13 @@ runs:
         INPUT_TASKMASTER_ARGS: ${{ inputs.taskmaster-args }}
       run: |
         node src/main.js
+
+    - name: Create GitHub Issues
+      id: create-issues
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_OWNER: ${{ github.repository_owner }}
+        GITHUB_REPO: ${{ github.event.repository.name }}
+      run: |
+        node create-issues.js

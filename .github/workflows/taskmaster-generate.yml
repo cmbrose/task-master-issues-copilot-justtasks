@@ -1,0 +1,110 @@
+name: Generate Tasks from PRDs
+
+on:
+  push:
+    paths:
+      - 'docs/**.prd.md'
+  workflow_dispatch:
+    inputs:
+      complexity-threshold:
+        description: 'Maximum complexity threshold for tasks'
+        required: false
+        default: '40'
+        type: string
+      max-depth:
+        description: 'Maximum depth for task hierarchy'
+        required: false
+        default: '3'
+        type: string
+      prd-path-glob:
+        description: 'Glob pattern for PRD files'
+        required: false
+        default: 'docs/**.prd.md'
+        type: string
+      force-regenerate:
+        description: 'Force regenerate all tasks (ignore existing issues)'
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    # Run daily at 6 AM UTC to check for any missed PRD updates
+    - cron: '0 6 * * *'
+
+jobs:
+  generate-tasks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+
+      - name: Build TypeScript
+        run: |
+          npm run build
+
+      - name: Generate task graph
+        id: generate-graph
+        env:
+          INPUT_COMPLEXITY_THRESHOLD: ${{ github.event.inputs.complexity-threshold || '40' }}
+          INPUT_MAX_DEPTH: ${{ github.event.inputs.max-depth || '3' }}
+          INPUT_PRD_PATH_GLOB: ${{ github.event.inputs.prd-path-glob || 'docs/**.prd.md' }}
+          INPUT_BREAKDOWN_MAX_DEPTH: '2'
+          INPUT_TASKMASTER_ARGS: '--verbose'
+        run: |
+          node src/main.js
+
+      - name: Create GitHub Issues
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO: ${{ github.event.repository.name }}
+          FORCE_REGENERATE: ${{ github.event.inputs.force-regenerate || 'false' }}
+        run: |
+          node create-issues.js
+
+      - name: Upload task graph artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-graph-${{ github.run_id }}
+          path: .taskmaster/tasks/tasks.json
+          retention-days: 30
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Task Generation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow**: ${{ github.workflow }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f .taskmaster/tasks/tasks.json ]; then
+            TASK_COUNT=$(jq '.master.tasks | length' .taskmaster/tasks/tasks.json)
+            echo "- **Tasks Generated**: $TASK_COUNT" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Tasks Generated**: 0 (no task graph found)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- [Task Graph](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
