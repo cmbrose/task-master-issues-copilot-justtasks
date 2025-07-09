@@ -21,12 +21,8 @@
     },
     "devDependencies": {
         "@types/jest": "^30.0.0",
-<<<<<<< HEAD
         "@types/node": "^20.19.6",
-=======
-        "@types/node": "^20.0.0",
         "@types/yaml": "^1.9.6",
->>>>>>> origin/main
         "jest": "^30.0.4",
         "ts-jest": "^29.4.0",
         "ts-node": "^10.0.0",

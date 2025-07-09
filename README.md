@@ -80,12 +80,9 @@ jobs:
 | `prd-path-glob` | Glob pattern for PRD files to process | No | `docs/**.prd.md` |
 | `breakdown-max-depth` | Maximum depth for task breakdown | No | `2` |
 | `taskmaster-args` | Additional arguments to pass to Taskmaster CLI | No | `''` |
-<<<<<<< HEAD
 | `replay-artifact-id` | ID of artifact to replay (for recovery workflows) | No | `''` |
 | `cleanup-artifacts` | Whether to cleanup expired artifacts | No | `false` |
-=======
 | `dry-run` | Enable dry-run mode (preview only, no issues created) | No | `false` |
->>>>>>> origin/main
 
 ## Outputs
 

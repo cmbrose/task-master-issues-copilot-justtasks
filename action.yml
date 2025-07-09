@@ -34,7 +34,6 @@ inputs:
     required: false
     default: ''
 
-<<<<<<< HEAD
   replay-artifact-id:
     description: 'ID of artifact to replay (for recovery workflows)'
     required: false
@@ -42,10 +41,11 @@ inputs:
 
   cleanup-artifacts:
     description: 'Whether to cleanup expired artifacts'
-=======
+    required: false
+    default: 'false'
+
   dry-run:
     description: 'Enable dry-run mode (preview only, no issues created)'
->>>>>>> origin/main
     required: false
     default: 'false'
 
