@@ -1,0 +1,393 @@
+name: Task Graph Recovery and Replay
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact-url:
+        description: 'URL of the task-graph.json artifact to replay'
+        required: true
+        type: string
+      artifact-id:
+        description: 'ID of the artifact to replay (alternative to URL)'
+        required: false
+        type: string
+      force-replay:
+        description: 'Force replay even if issues already exist'
+        required: false
+        default: false
+        type: boolean
+      dry-run:
+        description: 'Enable dry-run mode (preview only, no issues created)'
+        required: false
+        default: false
+        type: boolean
+      max-retries:
+        description: 'Maximum number of retry attempts for failed operations'
+        required: false
+        default: '3'
+        type: string
+      batch-size:
+        description: 'Number of issues to process in each batch'
+        required: false
+        default: '10'
+        type: string
+
+jobs:
+  replay-task-graph:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+
+      - name: Build TypeScript
+        run: |
+          npm run build
+
+      - name: Validate inputs
+        id: validate-inputs
+        run: |
+          echo "Validating replay inputs..."
+          
+          # Check that either artifact-url or artifact-id is provided
+          if [ -z "${{ github.event.inputs.artifact-url }}" ] && [ -z "${{ github.event.inputs.artifact-id }}" ]; then
+            echo "Error: Either artifact-url or artifact-id must be provided"
+            exit 1
+          fi
+          
+          # Validate URL format if provided
+          if [ -n "${{ github.event.inputs.artifact-url }}" ]; then
+            URL="${{ github.event.inputs.artifact-url }}"
+            if [[ ! "$URL" =~ ^https?:// ]]; then
+              echo "Error: Invalid artifact URL format: $URL"
+              exit 1
+            fi
+            echo "artifact-source=url" >> $GITHUB_OUTPUT
+            echo "artifact-location=$URL" >> $GITHUB_OUTPUT
+          else
+            echo "artifact-source=id" >> $GITHUB_OUTPUT
+            echo "artifact-location=${{ github.event.inputs.artifact-id }}" >> $GITHUB_OUTPUT
+          fi
+          
+          # Validate numeric inputs
+          MAX_RETRIES="${{ github.event.inputs.max-retries }}"
+          BATCH_SIZE="${{ github.event.inputs.batch-size }}"
+          
+          if ! [[ "$MAX_RETRIES" =~ ^[0-9]+$ ]] || [ "$MAX_RETRIES" -lt 1 ] || [ "$MAX_RETRIES" -gt 10 ]; then
+            echo "Error: max-retries must be a number between 1 and 10"
+            exit 1
+          fi
+          
+          if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ] || [ "$BATCH_SIZE" -gt 50 ]; then
+            echo "Error: batch-size must be a number between 1 and 50"
+            exit 1
+          fi
+          
+          echo "Input validation successful"
+          echo "max-retries=$MAX_RETRIES" >> $GITHUB_OUTPUT
+          echo "batch-size=$BATCH_SIZE" >> $GITHUB_OUTPUT
+
+      - name: Download and validate artifact
+        id: download-artifact
+        env:
+          ARTIFACT_SOURCE: ${{ steps.validate-inputs.outputs.artifact-source }}
+          ARTIFACT_LOCATION: ${{ steps.validate-inputs.outputs.artifact-location }}
+          MAX_RETRIES: ${{ steps.validate-inputs.outputs.max-retries }}
+        run: |
+          echo "Downloading artifact from: $ARTIFACT_SOURCE ($ARTIFACT_LOCATION)"
+          
+          # Use the enhanced artifact download mechanism
+          node -e "
+            const { TaskmasterAction } = require('./src/main.js');
+            const action = new TaskmasterAction({
+              complexityThreshold: 40,
+              maxDepth: 3,
+              prdPathGlob: 'docs/**.prd.md',
+              breakdownMaxDepth: 2,
+              taskmasterArgs: ''
+            });
+            
+            async function downloadAndValidate() {
+              try {
+                let taskGraph;
+                if (process.env.ARTIFACT_SOURCE === 'url') {
+                  taskGraph = await action.downloadFromArtifactUrl(process.env.ARTIFACT_LOCATION);
+                } else {
+                  taskGraph = await action.restoreFromArtifact(process.env.ARTIFACT_LOCATION);
+                }
+                
+                await action.saveTaskGraph(taskGraph);
+                console.log('Artifact download and validation completed successfully');
+                
+                const fs = require('fs');
+                fs.writeFileSync('task-graph-metadata.json', JSON.stringify({
+                  taskCount: taskGraph.metadata.taskCount,
+                  prdVersion: taskGraph.metadata.prdVersion,
+                  generationTimestamp: taskGraph.metadata.generationTimestamp
+                }, null, 2));
+                
+              } catch (error) {
+                console.error('Failed to download or validate artifact:', error);
+                process.exit(1);
+              }
+            }
+            
+            downloadAndValidate();
+          "
+          
+          # Verify the downloaded task graph
+          if [ ! -f .taskmaster/tasks/task-graph.json ]; then
+            echo "Error: Task graph file not found after download"
+            exit 1
+          fi
+          
+          # Extract metadata for output
+          TASK_COUNT=$(jq '.metadata.taskCount' task-graph-metadata.json)
+          PRD_VERSION=$(jq -r '.prdVersion' task-graph-metadata.json)
+          GENERATION_TIMESTAMP=$(jq -r '.generationTimestamp' task-graph-metadata.json)
+          
+          echo "task-count=$TASK_COUNT" >> $GITHUB_OUTPUT
+          echo "prd-version=$PRD_VERSION" >> $GITHUB_OUTPUT
+          echo "generation-timestamp=$GENERATION_TIMESTAMP" >> $GITHUB_OUTPUT
+          
+          echo "Downloaded task graph: $TASK_COUNT tasks, version: $PRD_VERSION"
+
+      - name: Pre-replay validation
+        id: pre-replay-validation
+        env:
+          FORCE_REPLAY: ${{ github.event.inputs.force-replay }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO: ${{ github.event.repository.name }}
+        run: |
+          echo "Performing pre-replay validation..."
+          
+          # Check for existing issues if not force replay
+          if [ "$FORCE_REPLAY" != "true" ]; then
+            echo "Checking for existing issues..."
+            
+            node -e "
+              const { IssueHierarchyManager } = require('./src/issue-hierarchy.js');
+              const { Octokit } = require('@octokit/rest');
+              
+              const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+              const hierarchyManager = new IssueHierarchyManager(octokit, process.env.GITHUB_OWNER, process.env.GITHUB_REPO);
+              
+              async function checkExistingIssues() {
+                try {
+                  const fs = require('fs');
+                  const taskGraph = JSON.parse(fs.readFileSync('.taskmaster/tasks/task-graph.json', 'utf8'));
+                  
+                  let existingCount = 0;
+                  const existingIssues = [];
+                  
+                  for (const task of taskGraph.master.tasks) {
+                    const issues = await octokit.issues.listForRepo({
+                      owner: process.env.GITHUB_OWNER,
+                      repo: process.env.GITHUB_REPO,
+                      state: 'all',
+                      per_page: 100
+                    });
+                    
+                    const existingIssue = issues.data.find(issue => 
+                      issue.title === task.title && 
+                      issue.body && 
+                      issue.body.includes('<!-- created-by-taskmaster-script -->')
+                    );
+                    
+                    if (existingIssue) {
+                      existingCount++;
+                      existingIssues.push({ task: task.title, issue: existingIssue.number });
+                    }
+                  }
+                  
+                  console.log(\`Found \${existingCount} existing issues for tasks in the task graph\`);
+                  
+                  if (existingCount > 0) {
+                    console.log('Existing issues:');
+                    existingIssues.forEach(item => {
+                      console.log(\`  - \${item.task} (Issue #\${item.issue})\`);
+                    });
+                    
+                    console.log('');
+                    console.log('Use force-replay=true to recreate these issues');
+                  }
+                  
+                  const fs = require('fs');
+                  fs.writeFileSync('existing-issues.json', JSON.stringify({
+                    count: existingCount,
+                    issues: existingIssues
+                  }, null, 2));
+                  
+                } catch (error) {
+                  console.error('Error checking existing issues:', error);
+                  process.exit(1);
+                }
+              }
+              
+              checkExistingIssues();
+            "
+            
+            EXISTING_COUNT=$(jq '.count' existing-issues.json)
+            echo "existing-issues-count=$EXISTING_COUNT" >> $GITHUB_OUTPUT
+            
+            if [ "$EXISTING_COUNT" -gt 0 ]; then
+              echo "Warning: Found $EXISTING_COUNT existing issues. Use force-replay=true to recreate them."
+            fi
+          else
+            echo "Force replay enabled - skipping existing issue check"
+            echo "existing-issues-count=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Issues (Replay)
+        id: create-issues
+        if: ${{ github.event.inputs.dry-run != 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO: ${{ github.event.repository.name }}
+          FORCE_REPLAY: ${{ github.event.inputs.force-replay }}
+          MAX_RETRIES: ${{ steps.validate-inputs.outputs.max-retries }}
+          BATCH_SIZE: ${{ steps.validate-inputs.outputs.batch-size }}
+        run: |
+          echo "Creating GitHub issues from replayed task graph..."
+          
+          # Use enhanced create-issues with replay mode
+          node -e "
+            const fs = require('fs');
+            
+            // Set replay mode environment variable
+            process.env.REPLAY_MODE = 'true';
+            process.env.FORCE_REGENERATE = process.env.FORCE_REPLAY;
+            
+            // Load and execute create-issues with enhanced error handling
+            try {
+              require('./create-issues.js');
+            } catch (error) {
+              console.error('Failed to create issues:', error);
+              process.exit(1);
+            }
+          "
+
+      - name: Post Replay Summary (Dry Run)
+        if: ${{ github.event.inputs.dry-run == 'true' }}
+        run: |
+          echo "DRY-RUN MODE: Replay Summary"
+          echo "============================="
+          
+          TASK_COUNT=$(jq '.metadata.taskCount' task-graph-metadata.json)
+          PRD_VERSION=$(jq -r '.prdVersion' task-graph-metadata.json)
+          GENERATION_TIMESTAMP=$(jq -r '.generationTimestamp' task-graph-metadata.json)
+          
+          echo "- **Source**: ${{ steps.validate-inputs.outputs.artifact-source }} (${{ steps.validate-inputs.outputs.artifact-location }})"
+          echo "- **Task Count**: $TASK_COUNT"
+          echo "- **PRD Version**: $PRD_VERSION"
+          echo "- **Generation Timestamp**: $GENERATION_TIMESTAMP"
+          echo "- **Force Replay**: ${{ github.event.inputs.force-replay }}"
+          echo "- **Existing Issues**: ${{ steps.pre-replay-validation.outputs.existing-issues-count }}"
+          echo ""
+          echo "Tasks that would be created:"
+          echo "----------------------------"
+          jq -r '.master.tasks[] | "- \(.title) (Priority: \(.priority // "medium"), Complexity: \(.complexity // "unknown")/10)"' .taskmaster/tasks/task-graph.json
+          echo ""
+          echo "No issues were created because dry-run mode is enabled."
+
+      - name: Upload replay artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-graph-replay-${{ github.run_id }}
+          path: |
+            .taskmaster/tasks/task-graph.json
+            task-graph-metadata.json
+            existing-issues.json
+          retention-days: 30
+
+      - name: Cleanup on failure
+        if: failure()
+        run: |
+          echo "Replay operation failed - performing cleanup..."
+          
+          # Clean up any partially created issues if needed
+          node -e "
+            const { IssueHierarchyManager } = require('./src/issue-hierarchy.js');
+            const { Octokit } = require('@octokit/rest');
+            
+            const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+            const hierarchyManager = new IssueHierarchyManager(octokit, process.env.GITHUB_OWNER, process.env.GITHUB_REPO);
+            
+            async function cleanup() {
+              try {
+                console.log('Cleanup completed');
+              } catch (error) {
+                console.error('Error during cleanup:', error);
+              }
+            }
+            
+            cleanup();
+          "
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO: ${{ github.event.repository.name }}
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Task Graph Replay Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow**: ${{ github.workflow }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: Manual replay" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dry Run Mode**: ${{ github.event.inputs.dry-run }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Force Replay**: ${{ github.event.inputs.force-replay }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifact Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source**: ${{ steps.validate-inputs.outputs.artifact-source }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Location**: ${{ steps.validate-inputs.outputs.artifact-location }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f task-graph-metadata.json ]; then
+            TASK_COUNT=$(jq '.taskCount' task-graph-metadata.json)
+            PRD_VERSION=$(jq -r '.prdVersion' task-graph-metadata.json)
+            GENERATION_TIMESTAMP=$(jq -r '.generationTimestamp' task-graph-metadata.json)
+            
+            echo "- **Task Count**: $TASK_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "- **PRD Version**: $PRD_VERSION" >> $GITHUB_STEP_SUMMARY
+            echo "- **Generation Timestamp**: $GENERATION_TIMESTAMP" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "${{ github.event.inputs.dry-run }}" != "true" ]; then
+              echo "- **Action**: GitHub issues created/updated" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- **Action**: Preview only (dry-run mode)" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "- **Status**: Failed to process artifact" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Max Retries**: ${{ steps.validate-inputs.outputs.max-retries }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Batch Size**: ${{ steps.validate-inputs.outputs.batch-size }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Existing Issues**: ${{ steps.pre-replay-validation.outputs.existing-issues-count }}" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- [Replay Artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
