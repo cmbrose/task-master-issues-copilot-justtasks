@@ -6,10 +6,12 @@ This GitHub Action automatically generates GitHub Issues from PRD (Product Requi
 
 - 🔄 Automatic issue generation from PRD files
 - 📊 Task complexity analysis and filtering
+- 🔒 Secure CLI binary management with checksum validation
 - 🏗️ Hierarchical task structure with dependencies
 - 🏷️ Automatic labeling and blocking status management
 - 📦 Artifact storage for task graphs
 - 🔁 Replay and recovery capabilities
+- ⚙️ Configurable complexity thresholds and depth limits
 
 ## Usage
 
@@ -95,11 +97,12 @@ permissions:
 ## How It Works
 
 1. **PRD Processing**: The action scans for PRD files matching the specified glob pattern
-2. **Task Analysis**: Uses Taskmaster CLI to analyze PRD content and generate task hierarchies
-3. **Complexity Filtering**: Filters tasks based on the complexity threshold
-4. **Issue Creation**: Creates GitHub Issues with proper metadata and dependencies
-5. **Labeling**: Applies appropriate labels including 'task' and 'blocked' status
-6. **Artifact Storage**: Stores task graphs as artifacts for replay capabilities
+2. **CLI Integration**: Downloads and validates the pinned Taskmaster CLI binary with checksum verification
+3. **Task Analysis**: Uses Taskmaster CLI to analyze PRD content and generate task hierarchies
+4. **Complexity Filtering**: Filters tasks based on the complexity threshold (≤40 default)
+5. **Issue Creation**: Creates GitHub Issues with proper metadata and dependencies
+6. **Labeling**: Applies appropriate labels including 'task' and 'blocked' status
+7. **Artifact Storage**: Stores task graphs as artifacts for replay capabilities
 
 ## Task Issue Format
 
@@ -147,6 +150,8 @@ Implement user authentication system...
 2. **PRD Not Found**: Check the `prd-path-glob` pattern matches your file structure
 3. **Complexity Too High**: Adjust `complexity-threshold` if tasks are being filtered out
 4. **Rate Limiting**: The action includes automatic retry logic for GitHub API rate limits
+5. **CLI Binary Issues**: Check network connectivity and platform support for binary downloads
+6. **Checksum Validation**: Ensure binary integrity by verifying checksums match expected values
 
 ### Debug Mode
 
@@ -156,6 +161,10 @@ Enable debug logging by setting the `taskmaster-args` input:
 with:
   taskmaster-args: '--verbose --debug'
 ```
+
+### CLI Integration
+
+For detailed information about the Taskmaster CLI integration, see [CLI_INTEGRATION.md](docs/CLI_INTEGRATION.md).
 
 ## Contributing
 
