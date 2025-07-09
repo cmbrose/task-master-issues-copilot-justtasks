@@ -46,7 +46,7 @@ interface RateLimitInfo {
 }
 
 interface ErrorCategory {
-  type: 'rate_limit' | 'network' | 'validation' | 'authentication' | 'unknown';
+  type: 'rate_limit' | 'network' | 'validation' | 'authentication' | 'invalid_artifact' | 'unknown';
   retryable: boolean;
   retryDelay: number;
   maxRetries: number;
@@ -122,6 +122,16 @@ class TaskmasterAction {
     if (error.status === 401 || error.status === 403) {
       return {
         type: 'authentication',
+        retryable: false,
+        retryDelay: 0,
+        maxRetries: 0
+      };
+    }
+    
+    // Artifact errors
+    if (errorMessage.includes('Invalid artifact')) {
+      return {
+        type: 'invalid_artifact',
         retryable: false,
         retryDelay: 0,
         maxRetries: 0
@@ -306,7 +316,7 @@ class TaskmasterAction {
     throw new Error('Invalid task graph format');
   }
 
-  private validateTaskGraphStructure(taskGraph: EnhancedTaskGraph): void {
+  public validateTaskGraphStructure(taskGraph: EnhancedTaskGraph): void {
     if (!taskGraph.master || !taskGraph.metadata) {
       throw new Error('Invalid task graph structure: missing master or metadata');
     }

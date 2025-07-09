@@ -1,0 +1,25 @@
+{
+  "master": {
+    "tasks": []
+  },
+  "metadata": {
+    "prdSource": [
+      "docs/sample.prd.md",
+      "docs/sample-feature.prd.md"
+    ],
+    "taskCount": 0,
+    "generationTimestamp": "2025-07-09T23:35:16.833Z",
+    "complexityScores": {
+      "min": 0,
+      "max": 0,
+      "average": 0
+    },
+    "hierarchyDepth": 0,
+    "prdVersion": "prd-18pt5nmws",
+    "taskmasterVersion": "unknown",
+    "retentionPolicy": {
+      "maxAge": "30d",
+      "maxCount": 10
+    }
+  }
+}
