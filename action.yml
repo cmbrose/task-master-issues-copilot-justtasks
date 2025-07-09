@@ -34,6 +34,11 @@ inputs:
     required: false
     default: ''
 
+  dry-run:
+    description: 'Enable dry-run mode (preview only, no issues created)'
+    required: false
+    default: 'false'
+
 outputs:
   task-count:
     description: 'Number of tasks generated'
@@ -81,6 +86,7 @@ runs:
 
     - name: Create GitHub Issues
       id: create-issues
+      if: ${{ inputs.dry-run != 'true' }}
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -88,3 +94,15 @@ runs:
         GITHUB_REPO: ${{ github.event.repository.name }}
       run: |
         node create-issues.js
+
+    - name: Post Preview Comment (Dry Run)
+      id: post-preview
+      if: ${{ inputs.dry-run == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_OWNER: ${{ github.repository_owner }}
+        GITHUB_REPO: ${{ github.event.repository.name }}
+        PR_NUMBER: ${{ github.event.number }}
+      run: |
+        node post-preview-comment.js
