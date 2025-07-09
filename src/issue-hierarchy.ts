@@ -250,7 +250,7 @@ export class IssueHierarchyManager {
   /**
    * Get all issues from the repository
    */
-  private async getAllIssues(): Promise<ApiIssue[]> {
+  async getAllIssues(): Promise<ApiIssue[]> {
     const allIssues: ApiIssue[] = [];
     let page = 1;
     let hasMore = true;
